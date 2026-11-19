@@ -1,0 +1,27 @@
+{
+  "name": "order-clone",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --import tsx src/index.ts",
+    "test": "node --import tsx --test test/ship.test.ts",
+    "test:test": "node --env-file=.env.test --import tsx --test test/ship.test.ts",
+    "test:prod": "node --env-file=.env.prod --import tsx --test test/ship.test.ts",
+    "test:integration": "node --import tsx --test --test-timeout=180000 test/integration/api.test.ts",
+    "test:all": "node --import tsx --test --test-timeout=180000 test/ship.test.ts test/integration/api.test.ts",
+    "clone-db": "bash scripts/clone-prodlike.sh"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^12.2.1",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "testcontainers": "^12.2.1",
+    "typescript": "^5.7.3"
+  }
+}

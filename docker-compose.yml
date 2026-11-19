@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+      POSTGRES_DB: orders_clean
+    ports:
+      # Host 5433 avoids clashing with a local Postgres on Windows (5432).
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init/01-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - ./db/sql:/sql:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U orders -d orders_clean && psql -U orders -d orders_clean -tAc \"SELECT count(*) FILTER (WHERE shipping_address IS NULL) FROM orders\" | grep -qx 0 && psql -U orders -d orders_prodlike -tAc \"SELECT count(*) FILTER (WHERE shipping_address IS NULL) FROM orders\" | grep -qx 4",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # Clean demo API — all seeded orders have shipping_address filled.
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgres://orders:orders@postgres:5432/orders_clean
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Clone API — after scripts/clone-prodlike.*, points at restored prodlike data
+  # (orders with NULL shipping_address). Until the clone script runs, this DB
+  # has schema only (empty tables). Restart after cloning if the pool stuck.
+  api-clone:
+    build: .
+    environment:
+      DATABASE_URL: postgres://orders:orders@postgres:5432/orders_clone
+      PORT: "3000"
+    ports:
+      - "3001:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

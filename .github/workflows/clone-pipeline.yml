@@ -1,0 +1,28 @@
+name: Clone pipeline
+
+on:
+  workflow_dispatch:
+
+jobs:
+  clone-and-ship:
+    name: Prod clone
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Start Postgres
+        run: docker compose up -d --wait postgres
+
+      - name: Copy live data into orders_clone
+        run: bash scripts/clone-prodlike.sh
+
+      - name: Ship every order on the clone
+        run: npm run test:prod
