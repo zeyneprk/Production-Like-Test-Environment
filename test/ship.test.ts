@@ -15,6 +15,83 @@ test.after(async () => {
   await pool.end();
 });
 
+type StoredOrder = {
+  id: number;
+  customer_name: string;
+  shipping_address: string | null;
+  status: string;
+  payment_status: string;
+};
+
+type WriteAction = "ship" | "cancel" | "refund";
+
+type Rehearsal = {
+  action: WriteAction;
+  /** True only when this write is safe to run on a real order. */
+  safe: boolean;
+  condition: string;
+};
+
+// The safe outcome is a business rule. The API does not enforce it: ship
+// crashes on NULL and otherwise always returns 200, cancel always cancels,
+// refund always pays the customer again.
+function rehearsalFor(order: StoredOrder): Rehearsal {
+  if (order.payment_status === "refunded" || order.status === "refunded") {
+    return {
+      action: "refund",
+      safe: false,
+      condition: "payment was already refunded",
+    };
+  }
+  if (order.status === "cancelled" && order.payment_status === "unpaid") {
+    return {
+      action: "refund",
+      safe: false,
+      condition: "payment was never captured",
+    };
+  }
+  if (order.status === "cancelled") {
+    return {
+      action: "cancel",
+      safe: false,
+      condition: "order is already cancelled",
+    };
+  }
+  if (order.status === "shipped") {
+    return {
+      action: "ship",
+      safe: false,
+      condition: "order is already shipped",
+    };
+  }
+  if (order.shipping_address == null) {
+    return {
+      action: "ship",
+      safe: false,
+      condition: "shipping address is missing (NULL)",
+    };
+  }
+  if (order.payment_status === "unpaid") {
+    return {
+      action: "ship",
+      safe: false,
+      condition: "payment was never captured",
+    };
+  }
+  if (order.status === "paid" && order.payment_status === "paid") {
+    return {
+      action: "ship",
+      safe: true,
+      condition: "paid order with an address",
+    };
+  }
+  return {
+    action: "ship",
+    safe: false,
+    condition: "order is in an unexpected historical state",
+  };
+}
+
 function listen(server: Server): Promise<string> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -29,13 +106,9 @@ function listen(server: Server): Promise<string> {
   });
 }
 
-test("ships every order already in the database", async () => {
-  const found = await pool.query<{
-    id: number;
-    customer_name: string;
-    shipping_address: string | null;
-  }>(
-    `SELECT o.id, c.name AS customer_name, o.shipping_address
+test("rehearses ship, cancel, and refund on every stored order", async () => {
+  const found = await pool.query<StoredOrder>(
+    `SELECT o.id, c.name AS customer_name, o.shipping_address, o.status, o.payment_status
      FROM orders o
      JOIN customers c ON c.id = o.customer_id
      ORDER BY o.id`,
@@ -53,15 +126,17 @@ test("ships every order already in the database", async () => {
 
   try {
     for (const order of found.rows) {
-      const response = await fetch(`${baseUrl}/orders/${order.id}/ship`, { method: "POST" });
+      const plan = rehearsalFor(order);
+      const response = await fetch(`${baseUrl}/orders/${order.id}/${plan.action}`, {
+        method: "POST",
+      });
       const body = await response.text();
-      if (response.status !== 200) {
-        const reason =
-          order.shipping_address == null
-            ? "shipping address is missing (NULL)"
-            : "unexpected failure";
+      const accepted = response.status === 200;
+      const blocked = response.status === 409;
+      const ok = plan.safe ? accepted : blocked;
+      if (!ok) {
         failures.push(
-          `order ${order.id} (${order.customer_name}): ${reason}. HTTP ${response.status} ${body}`,
+          `order ${order.id} (${order.customer_name}): ${plan.condition}. POST /${plan.action} returned HTTP ${response.status} ${body}`,
         );
       }
     }

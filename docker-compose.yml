@@ -16,7 +16,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U orders -d orders_clean && psql -U orders -d orders_clean -tAc \"SELECT count(*) FILTER (WHERE shipping_address IS NULL) FROM orders\" | grep -qx 0 && psql -U orders -d orders_prodlike -tAc \"SELECT count(*) FILTER (WHERE shipping_address IS NULL) FROM orders\" | grep -qx 4",
+          "pg_isready -U orders -d orders_clean && psql -U orders -d orders_clean -tAc \"SELECT count(*) FROM orders WHERE status = 'paid' AND payment_status = 'paid' AND shipping_address IS NOT NULL\" | grep -qx 15 && psql -U orders -d orders_prodlike -tAc \"SELECT count(*) FILTER (WHERE shipping_address IS NULL) FROM orders\" | grep -qx 2 && psql -U orders -d orders_prodlike -tAc \"SELECT count(*) FROM orders WHERE status = 'shipped'\" | grep -qx 1 && psql -U orders -d orders_prodlike -tAc \"SELECT count(*) FROM orders WHERE status = 'cancelled'\" | grep -qx 2 && psql -U orders -d orders_prodlike -tAc \"SELECT count(*) FROM orders WHERE payment_status = 'refunded'\" | grep -qx 1 && psql -U orders -d orders_prodlike -tAc \"SELECT count(*) FROM orders WHERE payment_status = 'unpaid'\" | grep -qx 2",
         ]
       interval: 2s
       timeout: 5s

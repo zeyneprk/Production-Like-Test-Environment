@@ -1,24 +1,23 @@
 # Sipariş klonu — Aşama A + B (Step A + Step B)
 
-Çalışan küçük bir **online sipariş API’si** + **klon simülasyonu** + **Testcontainers entegrasyon testleri**. Amaç: geliştirici kodu temiz veride yeşil geçer; production-benzeri (NULL adresli eski mağaza-teslim siparişleri) klona bağlanınca `POST /orders/:id/ship` kırılır. Aşama B, aynı API’yi her koşuda yeni bir PostgreSQL konteynerine karşı doğrular.
-
-Bu depo **Aşama A + B**. GitHub Actions ve yüz binlerce satırlık seed **yok** (Aşama C+).
+Çalışan küçük bir **online sipariş API’si** + **klon simülasyonu** + **Testcontainers entegrasyon testleri**. Amaç: kargoya verme, iptal ve iade gibi production’da çalıştırılamayacak yazmaları, canlı verinin klonunda prova etmek. Temiz seed’de her sipariş ödenmiş ve adresi doludur, prova yeşil biter. Production-benzeri klonda geçmiş kayıtlar (boş adres, kargolanmış, iptal, iadesi yapılmış, tahsil edilmemiş) aynı yazmaları tehlikeli kılar.
 
 ## Ne var?
 
 | Parça | Açıklama |
 | --- | --- |
 | Tablolar | `customers`, `products`, `orders` (aynı şema: clean + prodlike) |
-| `orders.shipping_address` | **Nullable** (eski store-pickup) |
-| Hata | `buildShippingLabel` içinde `address.trim()` — NULL kontrolü yok → çöker |
-| Clean seed | 8 müşteri, 5 ürün, 15 sipariş; **hepsinde adres dolu** |
-| Prodlike seed | Aynı yapı; sipariş **3, 7, 11, 14** adresi `NULL` (+ bir uzun Türkçe adres) |
+| `orders.shipping_address` | **Nullable** (eski mağazadan teslim) |
+| `orders.status` / `payment_status` | `pending`, `paid`, `shipped`, `cancelled`, `refunded` / `unpaid`, `paid`, `refunded` |
+| Yazma hataları | ship, `NULL` adreste `trim()` ile çöker; aksi halde durum ne olursa olsun 200 döner. cancel her zaman iptal eder. refund parayı hiç alınmamış veya zaten iade edilmiş siparişte de öder |
+| Clean seed | 8 müşteri, 5 ürün, 15 sipariş; hepsi `paid` + adres dolu |
+| Prodlike seed | Aynı 15 satır. 3 ve 7 adres `NULL`. 2 tahsil edilmemiş. 5 zaten iade. 6 iptal + tahsil yok. 11 kargolanmış. 14 iptal |
 | Klon | `pg_dump orders_prodlike` → `pg_restore orders_clone` |
 | Aşama B | Testcontainers: her `test:integration` koşusunda geçici Postgres |
 
 ### Raporla hizalama notu
 
-Belgedeki ~7 uç nokta şu şekilde alındı: müşteri CRUD (5) + sipariş oluştur + müşteriye göre sipariş listele. Ek olarak kasıtlı hata için `POST /orders/:id/ship` duruyor. React arayüz bu kopyada yoktu; Aşama A/B’de UI eklenmedi (kanıt API + DB üzerinden).
+Belgedeki ~7 uç nokta şu şekilde alındı: müşteri CRUD (5) + sipariş oluştur + müşteriye göre sipariş listele. Kasıtlı yazma hataları için `POST /orders/:id/ship`, `/cancel` ve `/refund` duruyor. React arayüz yok.
 
 ## Portlar
 
@@ -46,10 +45,10 @@ docker compose restart api-clone
 `DATABASE_URL` hangi DB’ye bağlanılacağını seçer.
 
 ```bash
-# Clean (adresler dolu) — ship geçer
+# Clean (hepsi ödenmiş, adres dolu) — yazma provası geçer
 DATABASE_URL=postgres://orders:orders@127.0.0.1:5433/orders_clean npm start
 
-# Clone (prodlike kopyası, NULL adresler) — ship NULL’da düşer
+# Clone (prodlike kopyası, geçmiş durumlar) — aynı yazmalar burada tehlikeli
 DATABASE_URL=postgres://orders:orders@127.0.0.1:5433/orders_clone npm start
 ```
 
@@ -65,7 +64,9 @@ PUT    /customers/:id
 DELETE /customers/:id
 POST   /orders
 GET    /customers/:id/orders
-POST   /orders/:id/ship     ← kasıtlı trim() hatası
+POST   /orders/:id/ship     ← NULL adreste çöker; diğer durumlarda koşulsuz kargolar
+POST   /orders/:id/cancel   ← zaten iptal edilmiş olsa da 200
+POST   /orders/:id/refund   ← tahsil yoksa veya iade edilmişse de para iade eder
 ```
 
 ### Manuel kontrol (curl)
@@ -78,7 +79,11 @@ curl -s -X POST http://localhost:3000/orders/1/ship
 
 # Clone API (klon script’inden sonra)
 curl -s -X POST http://localhost:3001/orders/3/ship
-# → 500 (Cannot read properties of null / trim)
+# → 500 (adres NULL)
+curl -s -X POST http://localhost:3001/orders/11/ship
+# → 200 (sipariş zaten kargolanmıştı; ikinci etiket)
+curl -s -X POST http://localhost:3001/orders/5/refund
+# → 200 (iade daha önce yapılmıştı)
 ```
 
 Yeni müşteri / sipariş:
@@ -99,14 +104,14 @@ curl -s http://localhost:3000/customers/1/orders
 
 ### Aşama A — ship (clean geçer / clone düşer)
 
-`test/ship.test.ts` sipariş eklemez; DB’deki 15 siparişe `POST /orders/:id/ship` çağırır. **Compose Postgres** gerekir (`DATABASE_URL`).
+`test/ship.test.ts` sipariş eklemez. Veritabanındaki 15 siparişin her birine, kaydın durumuna göre bir kez `ship`, `cancel` veya `refund` çağırır. Güvenli yazma 200 bekler. Tehlikeli yazma 409 bekler; API bunu yapmaz. **Compose Postgres** gerekir (`DATABASE_URL`).
 
 ```bash
 DATABASE_URL=postgres://orders:orders@127.0.0.1:5433/orders_clean npm test
-# beklenen: pass
+# beklenen: pass — 15 siparişin hepsi ödenmiş ve adresi dolu
 
 DATABASE_URL=postgres://orders:orders@127.0.0.1:5433/orders_clone npm test
-# beklenen: fail — NULL shipping_address (ör. 3, 7, 11, 14)
+# beklenen: fail — 2, 3, 5, 6, 7, 11, 14
 ```
 
 ### Aşama B — entegrasyon (Testcontainers)

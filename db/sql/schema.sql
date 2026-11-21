@@ -20,7 +20,12 @@ CREATE TABLE orders (
   product_id       INTEGER NOT NULL REFERENCES products (id),
   quantity         INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
   shipping_address TEXT,
-  status           TEXT NOT NULL DEFAULT 'pending',
+  -- pending: checkout açık. paid: tahsil edilmiş, henüz kargolanmamış.
+  -- shipped / cancelled / refunded: geçmiş kayıtlarda da görülebilir.
+  status           TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending', 'paid', 'shipped', 'cancelled', 'refunded')),
+  payment_status   TEXT NOT NULL DEFAULT 'unpaid'
+                   CHECK (payment_status IN ('unpaid', 'paid', 'refunded')),
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

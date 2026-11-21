@@ -16,6 +16,7 @@ type OrderListRow = {
   quantity: number;
   shipping_address: string | null;
   status: string;
+  payment_status: string;
   created_at: Date;
 };
 
@@ -192,7 +193,7 @@ export function createApp(pool: Pool): express.Express {
       const inserted = await pool.query<OrderListRow>(
         `INSERT INTO orders (customer_id, product_id, quantity, shipping_address)
          VALUES ($1, $2, $3, $4)
-         RETURNING id, customer_id, product_id, quantity, shipping_address, status, created_at`,
+         RETURNING id, customer_id, product_id, quantity, shipping_address, status, payment_status, created_at`,
         [customerId, productId, qty, address],
       );
       res.status(201).json(inserted.rows[0]);
@@ -218,7 +219,7 @@ export function createApp(pool: Pool): express.Express {
       }
 
       const found = await pool.query<OrderListRow>(
-        `SELECT id, customer_id, product_id, quantity, shipping_address, status, created_at
+        `SELECT id, customer_id, product_id, quantity, shipping_address, status, payment_status, created_at
          FROM orders
          WHERE customer_id = $1
          ORDER BY id`,
@@ -253,11 +254,77 @@ export function createApp(pool: Pool): express.Express {
       }
 
       const label = buildShippingLabel(order);
+      // No check for unpaid, already shipped, or cancelled. A second call
+      // creates another label and marks the row shipped again.
       await pool.query(
         `UPDATE orders SET status = 'shipped' WHERE id = $1`,
         [order.id],
       );
       res.status(200).json({ orderId: order.id, label });
+    } catch (err) {
+      respondError(res, err);
+    }
+  });
+
+  // Intentional: cancel succeeds even when the order was already cancelled
+  // or has already left the warehouse.
+  app.post("/orders/:id/cancel", async (req, res) => {
+    const id = parseId(req.params.id);
+    if (id == null) {
+      res.status(400).json({ error: "invalid order id" });
+      return;
+    }
+
+    try {
+      const found = await pool.query<{ id: number }>(
+        "SELECT id FROM orders WHERE id = $1",
+        [id],
+      );
+      if (!found.rows[0]) {
+        res.status(404).json({ error: "order not found" });
+        return;
+      }
+
+      await pool.query(
+        `UPDATE orders SET status = 'cancelled' WHERE id = $1`,
+        [id],
+      );
+      res.status(200).json({ orderId: id, status: "cancelled" });
+    } catch (err) {
+      respondError(res, err);
+    }
+  });
+
+  // Intentional: refund pays the customer even when the payment was never
+  // captured, and pays again when the order was already refunded.
+  app.post("/orders/:id/refund", async (req, res) => {
+    const id = parseId(req.params.id);
+    if (id == null) {
+      res.status(400).json({ error: "invalid order id" });
+      return;
+    }
+
+    try {
+      const found = await pool.query<{ id: number; refunded_cents: number }>(
+        `SELECT o.id, (p.price_cents * o.quantity) AS refunded_cents
+         FROM orders o
+         JOIN products p ON p.id = o.product_id
+         WHERE o.id = $1`,
+        [id],
+      );
+      const order = found.rows[0];
+      if (!order) {
+        res.status(404).json({ error: "order not found" });
+        return;
+      }
+
+      await pool.query(
+        `UPDATE orders
+         SET status = 'refunded', payment_status = 'refunded'
+         WHERE id = $1`,
+        [order.id],
+      );
+      res.status(200).json({ orderId: order.id, refundedCents: order.refunded_cents });
     } catch (err) {
       respondError(res, err);
     }

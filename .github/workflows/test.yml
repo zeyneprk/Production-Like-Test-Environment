@@ -23,5 +23,5 @@ jobs:
       - name: Start Postgres
         run: docker compose up -d --wait postgres
 
-      - name: Ship every order in the clean database
+      - name: Rehearse writes against the clean database
         run: npm run test:test

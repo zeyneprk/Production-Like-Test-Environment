@@ -24,5 +24,5 @@ jobs:
       - name: Copy live data into orders_clone
         run: bash scripts/clone-prodlike.sh
 
-      - name: Ship every order on the clone
+      - name: Rehearse writes against the clone
         run: npm run test:prod
