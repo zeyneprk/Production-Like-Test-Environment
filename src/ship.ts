@@ -6,6 +6,6 @@ export type OrderRow = {
 
 export function buildShippingLabel(order: OrderRow): string {
   const address = order.shipping_address;
-  
+   const normalized = address.trim();
   return [`ORDER ${order.id}`, `TO ${order.customer_name}`, `ADDR ${normalized}`].join("\n");
 }
