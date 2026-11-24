@@ -24,7 +24,6 @@ export function createApp(pool: Pool): express.Express {
   const app = express();
   app.use(express.json());
 
-  // --- customers -----------------------------------------------------------
 
   app.post("/customers", async (req, res) => {
     const { name, email, phone } = req.body ?? {};
@@ -141,8 +140,7 @@ export function createApp(pool: Pool): express.Express {
     }
   });
 
-  // --- orders --------------------------------------------------------------
-
+  // orders 
   app.post("/orders", async (req, res) => {
     const { customer_id, product_id, quantity, shipping_address } = req.body ?? {};
     const customerId = Number(customer_id);
@@ -162,7 +160,7 @@ export function createApp(pool: Pool): express.Express {
       return;
     }
 
-    // Explicit null keeps store-pickup / missing-address rows representable.
+
     let address: string | null = null;
     if (shipping_address != null) {
       if (typeof shipping_address !== "string") {
@@ -231,7 +229,7 @@ export function createApp(pool: Pool): express.Express {
     }
   });
 
-  // Intentional address fault: trim() with no null check → crash on NULL.
+
   app.post("/orders/:id/ship", async (req, res) => {
     const id = parseId(req.params.id);
     if (id == null) {
@@ -254,8 +252,7 @@ export function createApp(pool: Pool): express.Express {
       }
 
       const label = buildShippingLabel(order);
-      // No check for unpaid, already shipped, or cancelled. A second call
-      // creates another label and marks the row shipped again.
+    
       await pool.query(
         `UPDATE orders SET status = 'shipped' WHERE id = $1`,
         [order.id],
@@ -266,8 +263,7 @@ export function createApp(pool: Pool): express.Express {
     }
   });
 
-  // Intentional: cancel succeeds even when the order was already cancelled
-  // or has already left the warehouse.
+ 
   app.post("/orders/:id/cancel", async (req, res) => {
     const id = parseId(req.params.id);
     if (id == null) {
@@ -295,8 +291,6 @@ export function createApp(pool: Pool): express.Express {
     }
   });
 
-  // Intentional: refund pays the customer even when the payment was never
-  // captured, and pays again when the order was already refunded.
   app.post("/orders/:id/refund", async (req, res) => {
     const id = parseId(req.params.id);
     if (id == null) {
