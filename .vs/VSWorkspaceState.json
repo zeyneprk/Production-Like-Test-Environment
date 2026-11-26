@@ -1,0 +1,12 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\.github",
+    "\\db",
+    "\\scripts",
+    "\\src",
+    "\\test"
+  ],
+  "SelectedNode": "\\src\\db.ts",
+  "PreviewInSolutionExplorer": false
+}
